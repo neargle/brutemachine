@@ -2,6 +2,7 @@ package brutemachine
 
 import (
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,40 +11,43 @@ import (
 // This structure contains some runtime statistics.
 type Statistics struct {
 	// Time the execution started
-	Start   time.Time
+	Start time.Time
 	// Time the execution finished
-	Stop    time.Time
+	Stop time.Time
 	// Total duration of the execution
-	Total   time.Duration
+	Total time.Duration
 	// Total number of inputs from the wordlist
-	Inputs  uint64
+	Inputs uint64
 	// Executions per second
-	Eps     float64
+	Eps float64
 	// Total number of executions
-	Execs   uint64
+	Execs uint64
 	// Total number of executions with positive results.
 	Results uint64
 }
 
 // This is where the main logic goes.
 type RunHandler func(line string) interface{}
+
 // This is where positive results are handled.
 type ResultHandler func(result interface{})
 
 // The main object.
 type Machine struct {
 	// Runtime statistics.
-	Stats       Statistics
+	Stats Statistics
 	// Number of input consumers.
-	consumers   uint
+	consumers uint
 	// Dictionary file name.
-	filename    string
+	filename string
+	// Dictionary text string.
+	dictText string
 	// Positive results channel.
-	output      chan interface{}
+	output chan interface{}
 	// Inputs channel.
-	input       chan string
+	input chan string
 	// WaitGroup to stop while the machine is running.
-	wait        sync.WaitGroup
+	wait sync.WaitGroup
 	// Main logic handler.
 	run_handler RunHandler
 	// Positive results handler.
@@ -51,7 +55,7 @@ type Machine struct {
 }
 
 // Builds a new machine object, if consumers is less or equal than 0, CPU*2 will be used as default value.
-func New( consumers int, filename string, run_handler RunHandler, res_handler ResultHandler) *Machine {
+func New(consumers int, filename string, defaultStr string, run_handler RunHandler, res_handler ResultHandler) *Machine {
 	workers := uint(0)
 	if consumers <= 0 {
 		workers = uint(runtime.NumCPU() * 2)
@@ -63,6 +67,7 @@ func New( consumers int, filename string, run_handler RunHandler, res_handler Re
 		Stats:       Statistics{},
 		consumers:   workers,
 		filename:    filename,
+		dictText:    defaultStr,
 		output:      make(chan interface{}),
 		input:       make(chan string),
 		wait:        sync.WaitGroup{},
@@ -102,22 +107,35 @@ func (m *Machine) Start() error {
 
 	m.Stats.Start = time.Now()
 
-	// count the inputs we have
-	lines, err := LineReader(m.filename, 0)
-	if err != nil {
-		return err
-	}
-	for _ = range lines {
-		m.Stats.Inputs++	
-	}
+	if m.filename == "" {
 
-	lines, err = LineReader(m.filename, 0)
-	if err != nil {
-		return err
-	}
-	for line := range lines {
-		m.wait.Add(1)
-		m.input <- line
+		lines := strings.Split(m.dictText, "\n")
+		for _ = range lines {
+			m.Stats.Inputs++
+		}
+		for _, line := range lines {
+			m.wait.Add(1)
+			m.input <- line
+		}
+
+	} else {
+		// count the inputs we have
+		lines, err := LineReader(m.filename, 0)
+		if err != nil {
+			return err
+		}
+		for _ = range lines {
+			m.Stats.Inputs++
+		}
+
+		lines, err = LineReader(m.filename, 0)
+		if err != nil {
+			return err
+		}
+		for line := range lines {
+			m.wait.Add(1)
+			m.input <- line
+		}
 	}
 
 	return nil
